@@ -1,0 +1,55 @@
+[project]
+name = "ai-knowledge-system"
+version = "0.1.0"
+description = "Production-ready AI knowledge system with hybrid RAG, evaluation, and monitoring"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Tobias Westholm" }]
+dependencies = [
+  "beautifulsoup4>=4.12.3",
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "langchain>=0.3.0",
+  "langchain-community>=0.3.0",
+  "langchain-openai>=0.3.0",
+  "numpy>=2.2.0",
+  "pydantic-settings>=2.10.0",
+  "python-dotenv>=1.0.1",
+  "pyyaml>=6.0.2",
+  "qdrant-client>=1.15.0",
+  "rank-bm25>=0.2.2",
+  "sentence-transformers>=3.3.0",
+  "typer>=0.16.0",
+  "uvicorn>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.16.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=1.0.0",
+  "ruff>=0.12.0",
+]
+
+[project.scripts]
+ai-ks = "ai_ks.cli:app"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_configs = true
+check_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+mypy_path = "src"
