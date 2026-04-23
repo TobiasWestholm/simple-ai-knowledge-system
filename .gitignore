@@ -17,3 +17,10 @@ logs/*.jsonl
 logs/*.db
 data/index/*
 !data/index/.gitkeep
+data/qdrant/
+.hf_cache/
+.model_cache/
+.tmp/
+.pytest_tmp/
+pytest-cache-files-*/
+knowledge/

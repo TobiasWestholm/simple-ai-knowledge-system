@@ -1,0 +1,10 @@
+sources:
+  - id: knowledge
+    title: Personal Knowledge Base
+    kind: directory
+    path: ../knowledge
+    include_extensions:
+      - .docx
+    tags:
+      - personal-knowledge
+      - word-documents
