@@ -4,20 +4,24 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://host.docker.internal:11434
+      EMBEDDING_URL: http://host.docker.internal:8001
+      LLM_MODEL_ID: batiai/gemma4-e2b
+      LLM_RUNTIME_MODEL: batiai/gemma4-e2b:q4
+      LLM_QUANTIZED: "true"
       MODEL_CACHE_DIR: /app/.model_cache
     volumes:
       - ./data:/app/data
       - ./.model_cache:/app/.model_cache
       - ./knowledge:/app/knowledge:ro
       - ./logs:/app/logs
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_started
 
   qdrant:
     image: qdrant/qdrant:v1.17.1

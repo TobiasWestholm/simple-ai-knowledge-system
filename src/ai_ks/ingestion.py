@@ -12,21 +12,20 @@ from typing import Any, Literal, Protocol, TypedDict
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
-import httpx
 import yaml  # type: ignore[import-untyped]
-from bs4 import BeautifulSoup
 from huggingface_hub import snapshot_download
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 
 from ai_ks.config import Settings
+from ai_ks.embeddings import RemoteBgeM3Embedder
 
 
 @dataclass(frozen=True)
 class SourceDefinition:
     id: str
     title: str
-    kind: Literal["file", "url", "directory"]
+    kind: Literal["directory"]
     location: str
     tags: tuple[str, ...]
     include_extensions: tuple[str, ...]
@@ -104,14 +103,24 @@ class BgeM3Embedder:
         "colbert_linear.pt",
     ]
 
-    def __init__(self, model_id: str, cache_dir: Path) -> None:
+    def __init__(
+        self,
+        model_id: str,
+        cache_dir: Path,
+        *,
+        device: str | None = None,
+    ) -> None:
         self.model_id = model_id
         self.cache_dir = cache_dir
+        self.device = device
         self._model: SentenceTransformer | None = None
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if self._model is None:
-            self._model = SentenceTransformer(str(self._ensure_local_model()))
+            self._model = SentenceTransformer(
+                str(self._ensure_local_model()),
+                device=self.device,
+            )
 
         embeddings = self._model.encode(
             texts,
@@ -119,6 +128,12 @@ class BgeM3Embedder:
             convert_to_numpy=True,
         )
         return embeddings.tolist()
+
+    def resolved_device(self) -> str:
+        if self._model is None:
+            self.embed_texts(["device probe"])
+        assert self._model is not None
+        return str(self._model.device)
 
     def _ensure_local_model(self) -> Path:
         model_dir = self.cache_dir / self.model_id.replace("/", "--")
@@ -133,7 +148,6 @@ class BgeM3Embedder:
         xet_cache = hub_home / "xet"
         os.environ.setdefault("HF_HOME", str(hub_home))
         os.environ.setdefault("HF_HUB_CACHE", str(hub_cache))
-        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hub_cache))
         os.environ.setdefault("HF_XET_CACHE", str(xet_cache))
         os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
         snapshot_download(
@@ -166,10 +180,23 @@ class BgeM3Embedder:
         return any(path.exists() for path in weight_candidates)
 
 
+ALLOWED_SOURCE_EXTENSIONS = (".docx", ".md", ".txt")
+
+
 class QdrantVectorStore:
-    def __init__(self, url: str, collection_name: str) -> None:
-        self.client = build_qdrant_client(url)
+    def __init__(
+        self,
+        url: str,
+        collection_name: str,
+        *,
+        client: QdrantClient | None = None,
+        max_upsert_payload_bytes: int = 24 * 1024 * 1024,
+        max_upsert_points: int = 128,
+    ) -> None:
+        self.client = client or build_qdrant_client(url)
         self.collection_name = collection_name
+        self.max_upsert_payload_bytes = max_upsert_payload_bytes
+        self.max_upsert_points = max_upsert_points
 
     def prepare_collection(self, vector_size: int, recreate: bool) -> None:
         if recreate and self.client.collection_exists(self.collection_name):
@@ -185,23 +212,29 @@ class QdrantVectorStore:
             )
 
     def upsert_chunks(self, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
-        points = [
-            models.PointStruct(
-                id=chunk.id,
-                vector=vector,
-                payload={
-                    "document_id": chunk.document_id,
-                    "title": chunk.title,
-                    "source_uri": chunk.source_uri,
-                    "chunk_index": chunk.chunk_index,
-                    "text": chunk.text,
-                    "tags": list(chunk.tags),
-                    "metadata": chunk.metadata,
-                },
-            )
-            for chunk, vector in zip(chunks, vectors, strict=True)
-        ]
-        self.client.upsert(collection_name=self.collection_name, points=points)
+        batch: list[models.PointStruct] = []
+        batch_size_bytes = 0
+
+        for chunk, vector in zip(chunks, vectors, strict=True):
+            point = build_qdrant_point(chunk, vector)
+            point_size_bytes = estimate_point_payload_bytes(point)
+
+            if (
+                batch
+                and (
+                    len(batch) >= self.max_upsert_points
+                    or batch_size_bytes + point_size_bytes > self.max_upsert_payload_bytes
+                )
+            ):
+                self.client.upsert(collection_name=self.collection_name, points=batch)
+                batch = []
+                batch_size_bytes = 0
+
+            batch.append(point)
+            batch_size_bytes += point_size_bytes
+
+        if batch:
+            self.client.upsert(collection_name=self.collection_name, points=batch)
 
 
 class IngestionService:
@@ -212,13 +245,15 @@ class IngestionService:
         vector_store: VectorStore | None = None,
     ) -> None:
         self.settings = settings
-        self.embedder = embedder or BgeM3Embedder(
-            settings.embed_model_id,
-            cache_dir=settings.model_cache_dir,
+        self.embedder = embedder or RemoteBgeM3Embedder(
+            base_url=settings.embedding_url,
+            timeout_seconds=settings.embedding_timeout_seconds,
         )
         self.vector_store = vector_store or QdrantVectorStore(
             url=settings.qdrant_url,
             collection_name=settings.qdrant_collection,
+            max_upsert_payload_bytes=settings.qdrant_upsert_max_payload_bytes,
+            max_upsert_points=settings.qdrant_upsert_max_points,
         )
 
     def run(self, recreate_collection: bool = True) -> IngestionResult:
@@ -280,13 +315,15 @@ def load_sources(path: Path) -> list[SourceDefinition]:
 
     for entry in raw_sources:
         kind = entry["kind"]
-        location = entry["path"] if kind in {"file", "directory"} else entry["url"]
+        if kind != "directory":
+            raise ValueError("Only directory sources are supported.")
+
         sources.append(
             SourceDefinition(
                 id=entry["id"],
                 title=entry.get("title", entry["id"]),
                 kind=kind,
-                location=location,
+                location=entry["path"],
                 tags=tuple(entry.get("tags", [])),
                 include_extensions=tuple(
                     extension.lower() for extension in entry.get("include_extensions", [])
@@ -302,29 +339,12 @@ def fetch_documents(sources: list[SourceDefinition], base_dir: Path) -> list[Raw
     documents: list[RawDocument] = []
 
     for source in sources:
-        if source.kind == "directory":
-            documents.extend(fetch_directory_documents(source, base_dir))
-            continue
-
-        raw_text, content_type, source_uri = read_source_contents(source, base_dir)
-        cleaned_text = clean_source_text(raw_text, content_type)
-        documents.append(
-            build_document_record(
-                source,
-                source.id,
-                source.title,
-                source_uri,
-                cleaned_text,
-            )
-        )
+        documents.extend(fetch_directory_documents(source, base_dir))
 
     return documents
 
 
-def clean_source_text(raw_text: str, content_type: str) -> str:
-    if "html" in content_type:
-        raw_text = BeautifulSoup(raw_text, "html.parser").get_text("\n")
-
+def clean_source_text(raw_text: str) -> str:
     normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]
 
@@ -395,6 +415,7 @@ def split_text(text: str, chunk_size: int, chunk_overlap: int) -> list[SplitChun
             break
 
         next_cursor = max(end - chunk_overlap, cursor + 1)
+        next_cursor = align_chunk_start(normalized_text, next_cursor)
         if next_cursor <= cursor:
             next_cursor = end
         cursor = next_cursor
@@ -407,19 +428,42 @@ def choose_split_end(text: str, start: int, target_end: int) -> int:
         return len(text)
 
     lower_bound = start + max(1, (target_end - start) // 2)
-    breakpoints = [
-        text.rfind("\n\n", lower_bound, target_end),
-        text.rfind(". ", lower_bound, target_end),
-        text.rfind(" ", lower_bound, target_end),
-    ]
-    split_at = max(breakpoints)
-    if split_at == -1:
-        return target_end
-    if text[split_at : split_at + 2] == "\n\n":
-        return split_at + 2
-    if text[split_at : split_at + 2] == ". ":
-        return split_at + 1
-    return split_at + 1
+    prioritized_breakpoints = (
+        ("\n\n", 2),
+        (". ", 1),
+        (" ", 1),
+    )
+    search_ranges = (
+        (lower_bound, target_end),
+        (start, target_end),
+    )
+
+    for marker, offset in prioritized_breakpoints:
+        for range_start, range_end in search_ranges:
+            split_at = text.rfind(marker, range_start, range_end)
+            if split_at != -1:
+                return split_at + offset
+
+    return target_end
+
+
+def align_chunk_start(text: str, cursor: int) -> int:
+    if cursor <= 0:
+        return 0
+    if cursor >= len(text):
+        return len(text)
+
+    if text[cursor].isspace():
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        return cursor
+
+    if text[cursor - 1].isalnum() and text[cursor].isalnum():
+        while cursor > 0 and text[cursor - 1].isalnum():
+            cursor -= 1
+        return cursor
+
+    return cursor
 
 
 def build_bm25_artifact(chunks: list[ChunkRecord]) -> list[dict[str, Any]]:
@@ -447,9 +491,6 @@ def build_manifest(
     vector_size: int,
 ) -> dict[str, Any]:
     return {
-        "llm_backend": settings.llm_backend,
-        "llm_model_id": settings.llm_model_id,
-        "llm_runtime_model": settings.llm_runtime_model,
         "embed_model_id": settings.embed_model_id,
         "qdrant_collection": settings.qdrant_collection,
         "chunk_size": settings.chunk_size,
@@ -479,17 +520,45 @@ def write_json(path: Path, payload: Any) -> None:
     )
 
 
+def estimate_point_payload_bytes(point: models.PointStruct) -> int:
+    payload = {
+        "id": str(point.id),
+        "vector": point.vector,
+        "payload": point.payload,
+    }
+    return len(json.dumps(payload, ensure_ascii=True).encode("utf-8"))
+
+
+def build_qdrant_point(chunk: ChunkRecord, vector: list[float]) -> models.PointStruct:
+    return models.PointStruct(
+        id=chunk.id,
+        vector=vector,
+        payload={
+            "document_id": chunk.document_id,
+            "title": chunk.title,
+            "source_uri": chunk.source_uri,
+            "chunk_index": chunk.chunk_index,
+            "text": chunk.text,
+            "tags": list(chunk.tags),
+            "metadata": chunk.metadata,
+        },
+    )
+
+
 def build_qdrant_client(location: str) -> QdrantClient:
-    if location.startswith("local:"):
-        local_path = Path(location.removeprefix("local:"))
-        local_path.mkdir(parents=True, exist_ok=True)
-        return QdrantClient(path=str(local_path))
     return QdrantClient(url=location)
 
 
 def fetch_directory_documents(source: SourceDefinition, base_dir: Path) -> list[RawDocument]:
     directory_path = (base_dir / source.location).resolve()
-    include_extensions = source.include_extensions or (".docx", ".md", ".txt")
+    include_extensions = source.include_extensions or ALLOWED_SOURCE_EXTENSIONS
+    unsupported_extensions = set(include_extensions) - set(ALLOWED_SOURCE_EXTENSIONS)
+    if unsupported_extensions:
+        raise ValueError(
+            "Only text file extensions are supported: "
+            + ", ".join(sorted(ALLOWED_SOURCE_EXTENSIONS))
+        )
+
     documents: list[RawDocument] = []
 
     for file_path in sorted(path for path in directory_path.rglob("*") if path.is_file()):
@@ -497,8 +566,7 @@ def fetch_directory_documents(source: SourceDefinition, base_dir: Path) -> list[
             continue
 
         relative_path = file_path.relative_to(directory_path)
-        raw_text, content_type = read_file_contents(file_path)
-        cleaned_text = clean_source_text(raw_text, content_type)
+        cleaned_text = clean_source_text(read_text_file(file_path))
         document_id = f"{source.id}/{relative_path.as_posix()}"
         document_title = file_path.stem.replace("_", " ")
         document_metadata = {
@@ -520,45 +588,12 @@ def fetch_directory_documents(source: SourceDefinition, base_dir: Path) -> list[
     return documents
 
 
-def read_source_contents(source: SourceDefinition, base_dir: Path) -> tuple[str, str, str]:
-    if source.kind == "file":
-        file_path = (base_dir / source.location).resolve()
-        raw_text, content_type = read_file_contents(file_path)
-        return raw_text, content_type, str(file_path)
-
-    response = httpx.get(source.location, timeout=20.0, follow_redirects=True)
-    response.raise_for_status()
-    content_type = response.headers.get("content-type", "text/plain")
-    return response.text, content_type, source.location
+def read_text_file(path: Path) -> str:
+    if path.suffix.lower() == ".docx":
+        return extract_docx_text(path)
+    return path.read_text(encoding="utf-8")
 
 
-def read_file_contents(path: Path) -> tuple[str, str]:
-    suffix = path.suffix.lower()
-    if suffix == ".docx":
-        return extract_docx_text(path), DOCX_CONTENT_TYPE
-    if suffix in {".html", ".htm"}:
-        return path.read_text(encoding="utf-8"), "text/html"
-    return path.read_text(encoding="utf-8"), "text/plain"
-
-
-def build_document_record(
-    source: SourceDefinition,
-    document_id: str,
-    title: str,
-    source_uri: str,
-    text: str,
-) -> RawDocument:
-    return RawDocument(
-        id=document_id,
-        title=title,
-        source_uri=source_uri,
-        text=text,
-        tags=source.tags,
-        metadata=dict(source.metadata),
-    )
-
-
-DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 WORD_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 

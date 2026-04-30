@@ -1,16 +1,47 @@
-.PHONY: sync run test lint typecheck
+.PHONY: sync run up down host-up test lint typecheck compose-up model-bootstrap embed-service ingest health eval
 
 sync:
-	uv sync --extra dev
+	"$$(./scripts/ensure_uv.sh)" sync --extra dev
 
-run:
-	uv run uvicorn ai_ks.main:app --reload
+run: up
+
+up:
+	./scripts/up_local_stack.sh
+
+down:
+	docker compose down
+	./scripts/stop_embedding_service.sh
+
+host-up:
+	./scripts/ensure_ollama.sh
+	./scripts/start_embedding_service.sh
 
 test:
-	uv run pytest -q
+	"$$(./scripts/ensure_uv.sh)" run pytest -q
 
 lint:
-	uv run ruff check .
+	"$$(./scripts/ensure_uv.sh)" run ruff check .
 
 typecheck:
-	uv run mypy src
+	"$$(./scripts/ensure_uv.sh)" run mypy src
+
+compose-up:
+	docker compose up -d --build qdrant api
+
+model-bootstrap:
+	./scripts/ensure_ollama.sh >/dev/null
+	"$$(./scripts/ensure_ollama.sh)" pull batiai/gemma4-e2b:q4
+
+embed-service:
+	./scripts/start_embedding_service.sh
+
+ingest:
+	docker compose run --rm api ai-ks ingest
+
+health:
+	curl http://127.0.0.1:8000/health
+
+eval:
+	curl -sS http://127.0.0.1:8000/evaluate \
+		-H 'Content-Type: application/json' \
+		-d '{"suites":["tool_behavior","failure","timing"]}'

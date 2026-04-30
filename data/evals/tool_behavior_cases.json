@@ -1,0 +1,274 @@
+[
+  {
+    "id": "rag-tls-lookup",
+    "category": "rag_lookup",
+    "prompt": "According to the local knowledge base, what are tertiary lymphoid structures (TLS) and why do they matter?",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "source_excerpt": "Tertiary lymphoid structures (TLS) are lymphoid formations found in nonlymphoid tissues, facilitate the influx of immune cells to cancer tissue, and improve treatment outcome when present.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["rewrite_query", "summarize_context"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "rag-recursive-binary-splitting",
+    "category": "rag_lookup",
+    "prompt": "Using the local knowledge base, explain recursive binary splitting in tree-based methods.",
+    "source_documents": ["f6 ML - Tree-Based Methods"],
+    "source_excerpt": "Tree-Based Methods are often used in industry, are easy to interpret, and use recursive binary splitting together with criteria such as classification error rate, Gini index, and entropy.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["rewrite_query", "summarize_context"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "rag-orthologs-lookup",
+    "category": "rag_lookup",
+    "prompt": "What are orthologs according to the local knowledge base?",
+    "source_documents": ["Summary Biochemistry"],
+    "source_excerpt": "Orthologs are the corresponding protein in two different species. Paralogs are homologs in the same species with different functions, and isozymes are paralogous enzymes catalyzing the same reaction.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["rewrite_query", "summarize_context"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "rag-christianity-symbol",
+    "category": "rag_lookup",
+    "prompt": "According to the local knowledge base, what is the most famous symbol of Christianity?",
+    "source_documents": ["3rd assignment - Fall 2021 BD"],
+    "source_excerpt": "The most famous symbol of Christianity is the cross. A crucifix is similar because it depicts the crucifixion of Jesus and symbolizes his sacrifice.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["rewrite_query", "summarize_context"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "rag-monoamine-deficiency",
+    "category": "rag_lookup",
+    "prompt": "What does the local knowledge base say about the connection between monoamine deficiency and depression?",
+    "source_documents": ["Essay Psychedelics vs Antidepressants"],
+    "source_excerpt": "The collected evidence does not fully support a simple causal connection between monoamine deficiency and depression, and additional neurological abnormalities are likely involved.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["rewrite_query", "summarize_context"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "rag-cognition-broca",
+    "category": "rag_lookup",
+    "prompt": "Using the local knowledge base, what is cognition and what can happen after damage to Broca's area?",
+    "source_documents": ["f11 CENT - Cognition and Higher brain functions"],
+    "source_excerpt": "Cognition is acquiring knowledge and understanding through thought, experience, and the senses. A lesion in the Broca area might make a person unable to find their words.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["rewrite_query", "summarize_context"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "no-tool-repeat-title",
+    "category": "no_tool",
+    "prompt": "Reply with exactly this document title and nothing else: Techniques and concepts used in the thesis.",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "forbidden_tools": ["rag_search", "rewrite_query", "summarize_context"],
+    "max_tool_calls": 0
+  },
+  {
+    "id": "no-tool-word-count-title",
+    "category": "no_tool",
+    "prompt": "How many words are in this exact document title: Course Summary Sustainable Mobility?",
+    "source_documents": ["Course Summary Sustainable Mobility"],
+    "forbidden_tools": ["rag_search", "rewrite_query", "summarize_context"],
+    "max_tool_calls": 0
+  },
+  {
+    "id": "no-tool-lowercase-phrase",
+    "category": "no_tool",
+    "prompt": "Convert this exact corpus phrase to lowercase and nothing else: Tertiary lymphoid structures (TLS).",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "source_excerpt": "Tertiary lymphoid structures (TLS)",
+    "forbidden_tools": ["rag_search", "rewrite_query", "summarize_context"],
+    "max_tool_calls": 0
+  },
+  {
+    "id": "no-tool-time-acronym",
+    "category": "no_tool",
+    "prompt": "Reply with exactly the acronym that appears inside this phrase: Tumor-immune microenvironment (TIME).",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "source_excerpt": "Tumor-immune microenvironment (TIME)",
+    "forbidden_tools": ["rag_search", "rewrite_query", "summarize_context"],
+    "max_tool_calls": 0
+  },
+  {
+    "id": "summary-tls-one-sentence",
+    "category": "summarize_only",
+    "prompt": "Summarize this text in one sentence: Tertiary lymphoid structures (TLS) are lymphoid formations found in nonlymphoid tissues. They form in inflamed tissues, facilitate the influx of immune cells to cancer tissue, and improve treatment outcome when present.",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "source_excerpt": "Tertiary lymphoid structures (TLS) are lymphoid formations found in nonlymphoid tissues and improve treatment outcome when present.",
+    "required_tools": ["summarize_context"],
+    "forbidden_tools": ["rag_search", "rewrite_query"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "summary-biochemistry-terms",
+    "category": "summarize_only",
+    "prompt": "Summarize this text in one sentence: Orthologs are the corresponding protein in two different species. Paralogs are homologs found in the same species and have different functions or genes. Isozymes are paralogous enzymes that catalyze the same reaction.",
+    "source_documents": ["Summary Biochemistry"],
+    "source_excerpt": "Orthologs, paralogs, and isozymes are related protein concepts with different meanings.",
+    "required_tools": ["summarize_context"],
+    "forbidden_tools": ["rag_search", "rewrite_query"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "summary-cognition-broca",
+    "category": "summarize_only",
+    "prompt": "Put this in brief, plain language: Cognition is acquiring knowledge and understanding through thought, experience, and the senses. A lesion in the Broca area might make you unable to find your words, while a lesion in the Wernicke area could make someone speak incoherently.",
+    "source_documents": ["f11 CENT - Cognition and Higher brain functions"],
+    "source_excerpt": "Cognition involves understanding the world, and Broca and Wernicke lesions affect language in different ways.",
+    "required_tools": ["summarize_context"],
+    "forbidden_tools": ["rag_search", "rewrite_query"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "summary-tree-methods",
+    "category": "summarize_only",
+    "prompt": "Make this shorter: Tree-Based Methods are often used in industry and are easy to understand. Recursive binary splitting partitions the feature space, while Gini index and entropy are preferred over plain classification error rate for deciding splits.",
+    "source_documents": ["f6 ML - Tree-Based Methods"],
+    "source_excerpt": "Tree-Based Methods are interpretable, widely used, and rely on recursive binary splitting with criteria such as Gini index and entropy.",
+    "required_tools": ["summarize_context"],
+    "forbidden_tools": ["rag_search", "rewrite_query"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "summary-psychedelics-depression",
+    "category": "summarize_only",
+    "prompt": "Give me the key point of this text: The collected evidence does not fully support a simple causal connection between monoamine deficiency and depression. Antidepressants have extensive evidence for reducing symptoms, while psychedelics may reduce symptoms after a single dose but are less thoroughly documented.",
+    "source_documents": ["Essay Psychedelics vs Antidepressants"],
+    "source_excerpt": "Depression is more complex than monoamine deficiency alone, and the evidence base differs between antidepressants and psychedelics.",
+    "required_tools": ["summarize_context"],
+    "forbidden_tools": ["rag_search", "rewrite_query"],
+    "max_tool_calls": 1
+  },
+  {
+    "id": "rag-summarize-tls",
+    "category": "rag_then_summarize",
+    "prompt": "Search the local knowledge base for tertiary lymphoid structures (TLS), then summarize the answer in one sentence.",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "source_excerpt": "Tertiary lymphoid structures (TLS) are lymphoid formations found in nonlymphoid tissues, facilitate the influx of immune cells to cancer tissue, and improve treatment outcome when present.",
+    "required_tools": ["rag_search", "summarize_context"],
+    "forbidden_tools": ["rewrite_query"],
+    "ordered_tools": ["rag_search", "summarize_context"],
+    "max_tool_calls": 2
+  },
+  {
+    "id": "rag-summarize-tree-methods",
+    "category": "rag_then_summarize",
+    "prompt": "Look up recursive binary splitting in the local knowledge base and then summarize it in one sentence.",
+    "source_documents": ["f6 ML - Tree-Based Methods"],
+    "source_excerpt": "Tree-Based Methods are often used in industry, are easy to interpret, and use recursive binary splitting together with criteria such as classification error rate, Gini index, and entropy.",
+    "required_tools": ["rag_search", "summarize_context"],
+    "forbidden_tools": ["rewrite_query"],
+    "ordered_tools": ["rag_search", "summarize_context"],
+    "max_tool_calls": 2
+  },
+  {
+    "id": "rewrite-rag-tls",
+    "category": "rewrite_then_rag",
+    "prompt": "Rewrite this retrieval query before searching the local knowledge base, then answer it: tls lung cancer immune structures why matter",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "required_tools": ["rewrite_query", "rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search"],
+    "max_tool_calls": 2,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "tls lung cancer immune structures why matter"
+  },
+  {
+    "id": "rewrite-rag-tree-methods",
+    "category": "rewrite_then_rag",
+    "prompt": "Rewrite this retrieval query before searching the local knowledge base, then answer it: recursive split tree methods gini entropy",
+    "source_documents": ["f6 ML - Tree-Based Methods"],
+    "required_tools": ["rewrite_query", "rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search"],
+    "max_tool_calls": 2,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "recursive split tree methods gini entropy"
+  },
+  {
+    "id": "rewrite-rag-biochemistry-terms",
+    "category": "rewrite_then_rag",
+    "prompt": "Enhance this retrieval query before searching the knowledge base, then answer it: orthologs paralogs isozymes meaning biochemistry",
+    "source_documents": ["Summary Biochemistry"],
+    "required_tools": ["rewrite_query", "rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search"],
+    "max_tool_calls": 2,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "orthologs paralogs isozymes meaning biochemistry"
+  },
+  {
+    "id": "rewrite-rag-depression",
+    "category": "rewrite_then_rag",
+    "prompt": "Make this retrieval query more clear before searching the local knowledge base, then answer it: monoamine deficiency depression psychedelic antidepressants",
+    "source_documents": ["Essay Psychedelics vs Antidepressants"],
+    "required_tools": ["rewrite_query", "rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search"],
+    "max_tool_calls": 2,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "monoamine deficiency depression psychedelic antidepressants"
+  },
+  {
+    "id": "rewrite-rag-cognition-language",
+    "category": "rewrite_then_rag",
+    "prompt": "Clarify this retrieval query before searching the local knowledge base, then answer it: broca area wernicke cognition note",
+    "source_documents": ["f11 CENT - Cognition and Higher brain functions"],
+    "required_tools": ["rewrite_query", "rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search"],
+    "max_tool_calls": 2,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "broca area wernicke cognition note"
+  },
+  {
+    "id": "rewrite-rag-summarize-tls",
+    "category": "mixed_flow",
+    "prompt": "Rewrite this retrieval query, search the local knowledge base, and then summarize the retrieved answer in one sentence: tls lung cancer immune structures why matter",
+    "source_documents": ["Techniques and concepts used in the thesis"],
+    "required_tools": ["rewrite_query", "rag_search", "summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search", "summarize_context"],
+    "max_tool_calls": 3,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "tls lung cancer immune structures why matter"
+  },
+  {
+    "id": "rewrite-rag-summarize-depression",
+    "category": "mixed_flow",
+    "prompt": "Rewrite this retrieval query, search the local knowledge base, and then summarize the retrieved answer in one sentence: monoamine deficiency depression psychedelic antidepressants",
+    "source_documents": ["Essay Psychedelics vs Antidepressants"],
+    "required_tools": ["rewrite_query", "rag_search", "summarize_context"],
+    "ordered_tools": ["rewrite_query", "rag_search", "summarize_context"],
+    "max_tool_calls": 3,
+    "rewrite_must_change_query": true,
+    "rewrite_reference_query": "monoamine deficiency depression psychedelic antidepressants"
+  },
+  {
+    "id": "out-of-corpus-fastapi-two-searches",
+    "category": "out_of_corpus",
+    "prompt": "Search your knowledge for information about FastAPI. If the first search does not find anything relevant, try one more search with different wording before answering.",
+    "source_documents": [],
+    "source_excerpt": "This case is intentionally out of corpus.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rag_search", "rag_search"],
+    "max_tool_calls": 3,
+    "allow_repeated_tools": true
+  },
+  {
+    "id": "out-of-corpus-docker-two-searches",
+    "category": "out_of_corpus",
+    "prompt": "Try really hard to find information about Docker. Use any useful tool at your disposal.",
+    "source_documents": [],
+    "source_excerpt": "This case is intentionally out of corpus.",
+    "required_tools": ["rag_search"],
+    "forbidden_tools": ["summarize_context"],
+    "ordered_tools": ["rag_search", "rag_search"],
+    "max_tool_calls": 3,
+    "allow_repeated_tools": true
+  }
+]

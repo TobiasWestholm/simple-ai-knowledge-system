@@ -5,6 +5,8 @@ sources:
     path: ../knowledge
     include_extensions:
       - .docx
+      - .md
+      - .txt
     tags:
       - personal-knowledge
-      - word-documents
+      - knowledge-documents

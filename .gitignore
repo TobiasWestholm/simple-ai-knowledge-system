@@ -15,11 +15,13 @@ htmlcov/
 .DS_Store
 logs/*.jsonl
 logs/*.db
+logs/*.log
 data/index/*
 !data/index/.gitkeep
 data/qdrant/
 .hf_cache/
 .model_cache/
+.runtime/
 .tmp/
 .pytest_tmp/
 pytest-cache-files-*/
