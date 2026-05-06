@@ -1,7 +1,7 @@
 # AI Knowledge System
 
-Containerized AI agent platform with FastAPI, Ollama, Qdrant, BM25, evaluation,
-and monitoring. Hybrid RAG is the first tool in the agent system.
+Local AI knowledge agent built with FastAPI, LangChain, Ollama, Qdrant, and
+hybrid retrieval.
 
 ## Quick start
 
@@ -16,12 +16,26 @@ Open health endpoint:
 curl http://127.0.0.1:8000/health
 ```
 
+Open the chat UI:
+
+```bash
+open http://127.0.0.1:8000/
+```
+
 Run the agent endpoint:
 
 ```bash
 curl http://127.0.0.1:8000/agent \
   -H 'Content-Type: application/json' \
   -d '{"message":"Summarize what FastAPI is"}'
+```
+
+Stream the agent answer:
+
+```bash
+curl -N http://127.0.0.1:8000/agent/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Explain what the knowledge base says about the tumor microenvironment.","thread_id":"demo-thread"}'
 ```
 
 Run the direct retrieval endpoint:
@@ -41,11 +55,7 @@ curl http://127.0.0.1:8000/evaluate \
   -d '{"suites":["tool_behavior","failure","timing"]}'
 ```
 
-`make eval` now uses the Dockerized API's `/evaluate` route, so evaluation runs
-in the same environment as `/agent` instead of in a separate host-side CLI
-process.
-
-## Milestone 2 workflow
+## Ingestion
 
 Create or update local indexes from the curated source list:
 
@@ -53,21 +63,13 @@ Create or update local indexes from the curated source list:
 make ingest
 ```
 
-The ingestion pipeline reads `data/sources.yaml`, loads supported files from the
-`knowledge/` folder, chunks them deterministically, embeds them with `BAAI/bge-m3`,
-upserts vectors into Qdrant, and writes BM25-ready artifacts into `data/index/`.
-
-The knowledge base is intentionally simple: `.docx`, Markdown, and text files in
-`knowledge/`.
-
-The local BGE-M3 cache is intentionally stored under `.model_cache/`. The
-download is large because it includes the base embedding weights; the ingestion
-pipeline now limits that cache to the files needed for `sentence-transformers`
-and skips the much larger ONNX export.
+The ingestion pipeline reads `data/sources.yaml`, loads supported files from
+`knowledge/`, chunks them deterministically, embeds them with `BAAI/bge-m3`,
+upserts vectors into Qdrant, and writes BM25 artifacts into `data/index/`.
 
 ## Apple Silicon runtime
 
-On this Mac, the supported local GPU path is:
+On Apple Silicon, the supported local GPU path is:
 
 - native host Ollama for `batiai/gemma4-e2b:q4`
 - Docker for `api` and `qdrant`
@@ -78,35 +80,34 @@ Bring up the full stack with one command:
 make run
 ```
 
-That command now does all of the following:
+That command:
 
-- installs Ollama on the host if it is missing
-- starts host Ollama and waits for its API
-- installs `uv` on the host if it is missing
-- installs and syncs the local Python dependencies with `uv`
-- pulls `batiai/gemma4-e2b:q4` if it is not already available
-- starts the host-native `BAAI/bge-m3` embedding service
+- installs missing local runtime dependencies (`uv`, Ollama)
+- starts host Ollama and the host embedding service
+- pulls `batiai/gemma4-e2b:q4` if needed
 - builds and starts `qdrant` and `api` in Docker
 - waits for the API health endpoint
 
-The app container now talks to host Ollama through
-`http://host.docker.internal:11434`, which lets Ollama run on the Apple GPU
-instead of inside Docker on CPU.
+`api` and `qdrant` stay in Docker, while Ollama and the `BAAI/bge-m3`
+embedding service run natively on the host so they can use the Apple GPU.
 
-The host-native `BAAI/bge-m3` embedding service listens on
-`http://127.0.0.1:8001` and loads the model with `device="mps"` on this Mac.
-Its internal interface is:
+## Minimal UI
 
-- `GET /health`
-- `POST /embed`
+The app now includes a simple FastAPI-served chat UI at:
 
-The containerized app now uses that host embedding service for both:
+- `http://127.0.0.1:8000/`
 
-- ingestion embeddings
-- query-time embeddings in hybrid retrieval
+The UI calls `POST /agent/stream` and shows:
 
-That means the `BAAI/bge-m3` model runs on the host Apple GPU for both indexing
-and querying, while `qdrant` and the API remain containerized.
+- the streamed answer
+- citations
+- tool-call timeline
+- final retrieval query
+- request id
+- timing diagnostics
+- service health banner and request errors
+
+It is intentionally small and inspectable.
 
 If you want just the host services without Docker:
 
@@ -120,7 +121,7 @@ To stop the stack:
 make down
 ```
 
-Rebuild and ingest from inside the API container:
+Rebuild and ingest:
 
 ```bash
 make run
@@ -136,9 +137,20 @@ agent over three tools:
 - `rewrite_query` for retrieval-friendly query rewrites
 - `summarize_context` for concise summaries
 
-The orchestration layer is now LangChain-first: LangChain owns tool registration,
-tool-calling flow, and intermediate message handling, while retrieval and tool
-business logic stay in plain Python modules underneath.
+The agent uses LangChain for orchestration while retrieval and tool business
+logic remain plain Python modules underneath.
+
+The agent also uses an in-memory LangGraph checkpointer. If you provide a
+`thread_id`, repeated `/agent` or `/agent/stream` calls continue the same
+server-side conversation thread. This memory is intentionally ephemeral and is
+lost on restart.
+
+`POST /agent/stream` is the streaming variant for the UI. It emits a text/event-stream
+response with:
+
+- `token` events for the final assistant answer text
+- a terminal `response` event containing the full structured `AgentResponse`
+- a terminal `done` event when the stream finishes
 
 ## Query workflow
 
@@ -152,27 +164,18 @@ agent runtime. The endpoint:
 - feeds the retrieved context into a small LangChain answer chain
 - returns the grounded answer, citations, hits, and retrieval diagnostics
 
-This gives the project two clean layers:
-
-- `/query` for inspecting the retrieval system directly
-- `/agent` for the full LangChain tool-calling agent on top of that system
-
 ## Evaluation and validation
 
-The current evaluation layer is intentionally narrow and runs through the
-containerized API:
+The current evaluation layer runs through the containerized API:
 
 - `tool_behavior`: pass/fail evaluation over the agent's tool choices
 - `failure`: input-robustness contract checks for empty, whitespace-only, and
   overlong requests, plus the 2000-character boundary case
 - `timing`: per-span timing summaries aggregated from the same tool-behavior runs
 
-The authored tool-behavior cases live in:
-
-- `data/evals/tool_behavior_cases.json`
-
-Those cases are designed to check acceptable behavior rather than one exact trace.
-The evaluator checks rules such as:
+The authored tool-behavior cases live in `data/evals/tool_behavior_cases.json`
+and are designed to check acceptable behavior rather than one exact trace. The
+evaluator checks rules such as:
 
 - required tools were called
 - forbidden tools were not called
@@ -183,3 +186,9 @@ The evaluator checks rules such as:
 The API also rejects empty, whitespace-only, and overlong queries before the
 agent or retrieval stack runs. The default limit is 2000 characters and is
 configured through `MAX_QUERY_CHARS`.
+
+Future evaluation plans:
+
+- `retrieval_hit_at_k`: assess whether hybrid retrieval surfaces at least one gold-relevant chunk or document in the top-k results, using per-query gold source labels and scoring with hit@k.
+- `citation_support`: assess whether the answer's cited evidence supports its main claims, using binary `supported` / `not_supported` labels and scoring with pass/fail citation-support checks.
+- `answers_the_question`: assess whether the final answer actually addresses the user's question well enough to be useful, using binary `pass` / `fail` labels and scoring with per-example answer-quality judgments.

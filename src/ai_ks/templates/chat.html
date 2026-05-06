@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ request.url_for('static', path='app.css') }}" />
+  </head>
+  <body>
+    <div
+      class="app-shell"
+      data-api-route="{{ default_route }}"
+      data-max-query-chars="{{ max_query_chars }}"
+    >
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">Local Agent Platform</p>
+          <h1>{{ app_name }}</h1>
+        </div>
+        <div class="status-band" id="status-band" aria-live="polite">
+          <span class="status-pill neutral">Checking services</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="chat-panel" aria-labelledby="chat-heading">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Chat</p>
+              <h2 id="chat-heading">Agent conversation</h2>
+            </div>
+            <button id="reset-button" class="secondary-button" type="button">Reset</button>
+          </div>
+
+          <div id="error-banner" class="error-banner hidden" role="alert"></div>
+
+          <div id="transcript" class="transcript" aria-live="polite">
+            <section class="empty-state">
+              <h3>Ask the knowledge base a question</h3>
+              <p>
+                The response panel will show the answer, citations, tool calls, and timings
+                from the same agent path the API uses.
+              </p>
+            </section>
+          </div>
+
+          <form id="chat-form" class="composer">
+            <label class="composer-label" for="message-input">Message</label>
+            <textarea
+              id="message-input"
+              name="message"
+              rows="5"
+              maxlength="{{ max_query_chars }}"
+              placeholder="Explain what the knowledge base says about the tumor microenvironment."
+              required
+            ></textarea>
+            <div class="composer-footer">
+              <span id="char-count" class="char-count">0 / {{ max_query_chars }}</span>
+              <div class="composer-actions">
+                <button id="send-button" class="primary-button" type="submit">Send</button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <aside class="inspector" aria-labelledby="inspector-heading">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Diagnostics</p>
+              <h2 id="inspector-heading">Request details</h2>
+            </div>
+          </div>
+
+          <section class="detail-section">
+            <h3>Latest request</h3>
+            <dl id="request-meta" class="meta-list">
+              <div><dt>Request ID</dt><dd>Waiting for first run</dd></div>
+              <div><dt>Final query</dt><dd>-</dd></div>
+            </dl>
+          </section>
+
+          <section class="detail-section">
+            <h3>Tool timeline</h3>
+            <ol id="tool-timeline" class="timeline-list">
+              <li class="placeholder-row">No tools used yet.</li>
+            </ol>
+          </section>
+
+          <section class="detail-section">
+            <h3>Timings</h3>
+            <div id="timings-table" class="kv-table">
+              <div class="placeholder-row">No timings yet.</div>
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <h3>Citations</h3>
+            <div id="citations-list" class="citation-list">
+              <div class="placeholder-row">No citations yet.</div>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="{{ request.url_for('static', path='app.js') }}" defer></script>
+  </body>
+</html>

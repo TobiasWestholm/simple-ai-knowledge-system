@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import lru_cache
 from time import perf_counter
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 from uuid import uuid4
 
 from langchain.agents import create_agent
@@ -12,6 +13,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_ks.config import DEFAULT_MAX_QUERY_CHARS, Settings, get_settings
@@ -21,6 +23,7 @@ from ai_ks.observability import (
     ObservabilitySink,
     TimingCollector,
     build_runtime_context,
+    clear_active_collector,
     elapsed_ms,
     get_active_collector,
     langsmith_request_context,
@@ -41,6 +44,7 @@ class AgentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(max_length=DEFAULT_MAX_QUERY_CHARS)
+    thread_id: str | None = None
     conversation: list[ConversationTurn] = Field(default_factory=list)
     max_steps: int | None = None
 
@@ -73,6 +77,7 @@ class ToolCallRecord(BaseModel):
 
 class AgentResponse(BaseModel):
     request_id: str
+    thread_id: str
     answer: str
     tool_calls: list[ToolCallRecord]
     citations: list[CitationResponse]
@@ -114,19 +119,16 @@ class RewriteQueryOutput(BaseModel):
     diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentGraphLike(Protocol):
-    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        ...
-
-
 class LangChainAgentService:
     SYSTEM_PROMPT = (
         "You are a local knowledge assistant. Use the provided tools to answer questions about "
-        "the indexed knowledge base. Rewrite ambiguous retrieval requests before searching. "
+        "the indexed knowledge base. Rewrite ambiguous retrieval requests with rewrite_query "
+        "before searching. "
         "When a question needs evidence from the knowledge base, use rag_search. When the user "
         "asks for a summary, use summarize_context. After using rag_search, answer with bracket "
         "citations like [1] or [2] that match the returned citations. Prefer concise, grounded "
-        "answers and avoid unsupported claims."
+        "answers and avoid unsupported claims. Always generate a response after a set of tool "
+        "calls."
     )
 
     def __init__(
@@ -134,8 +136,9 @@ class LangChainAgentService:
         settings: Settings,
         retriever: HybridRetriever | None = None,
         utility_model: Any | None = None,
-        agent_graph: AgentGraphLike | None = None,
+        agent_graph: Any | None = None,
         observability: ObservabilitySink | None = None,
+        checkpointer: InMemorySaver | None = None,
     ) -> None:
         self.settings = settings
         self.retriever = retriever or HybridRetriever(settings)
@@ -143,6 +146,7 @@ class LangChainAgentService:
         self.rewrite_chain = self._build_rewrite_chain()
         self.summary_chain = self._build_summary_chain()
         self.tools = self._build_tools()
+        self.checkpointer = checkpointer or InMemorySaver()
         self.agent_graph = agent_graph or self._build_agent_graph()
         self.observability = observability or LocalObservability(
             sqlite_path=settings.sqlite_path,
@@ -156,12 +160,16 @@ class LangChainAgentService:
             max_chars=self.settings.max_query_chars,
         )
         request_id = str(uuid4())
+        thread_id = request.thread_id or str(uuid4())
         collector = TimingCollector(route="/agent", request_id=request_id)
         token = set_active_collector(collector)
         started = perf_counter()
-        config = {
-            "recursion_limit": max(25, (request.max_steps or self.settings.agent_max_steps) * 4),
-        }
+        config = self._build_graph_config(
+            request_id=request_id,
+            route="/agent",
+            thread_id=thread_id,
+            max_steps=request.max_steps,
+        )
         response: AgentResponse | None = None
         error: str | None = None
         try:
@@ -176,13 +184,7 @@ class LangChainAgentService:
                         name="agent_graph.invoke",
                         call=lambda: self.agent_graph.invoke(
                             {"messages": self._build_messages(request)},
-                            config={
-                                **config,
-                                "metadata": {
-                                    "request_id": request_id,
-                                    "route": "/agent",
-                                },
-                            },
+                            config=config,
                         ),
                     )
             except Exception as exc:
@@ -194,6 +196,7 @@ class LangChainAgentService:
             diagnostics["runtime"] = build_runtime_context(self.settings, route="/agent")
             response = self._build_response(
                 request_id=request_id,
+                thread_id=thread_id,
                 result=result,
                 diagnostics=diagnostics,
             )
@@ -215,6 +218,112 @@ class LangChainAgentService:
             )
             reset_active_collector(token)
 
+    def stream(self, request: AgentRequest) -> Iterator[str]:
+        request.message = normalize_user_text(
+            request.message,
+            field_name="Message",
+            max_chars=self.settings.max_query_chars,
+        )
+        request_id = str(uuid4())
+        thread_id = request.thread_id or str(uuid4())
+        collector = TimingCollector(route="/agent/stream", request_id=request_id)
+        started = perf_counter()
+        config = self._build_graph_config(
+            request_id=request_id,
+            route="/agent/stream",
+            thread_id=thread_id,
+            max_steps=request.max_steps,
+        )
+        response: AgentResponse | None = None
+        error: str | None = None
+
+        def iterator() -> Iterator[str]:
+            nonlocal response, error
+            set_active_collector(collector)
+            final_result: Any | None = None
+            streamed_parts: list[str] = []
+            try:
+                with langsmith_request_context(
+                    self.settings,
+                    route="/agent/stream",
+                    request_id=request_id,
+                ):
+                    agent_started = perf_counter()
+                    stream_status = "success"
+                    try:
+                        stream_iter = self.agent_graph.stream(
+                            {"messages": self._build_messages(request)},
+                            config=config,
+                            stream_mode=["messages", "values"],
+                        )
+                        for chunk in stream_iter:
+                            if not isinstance(chunk, tuple) or len(chunk) != 2:
+                                continue
+                            mode, payload = chunk
+                            if mode == "messages":
+                                token_message, metadata = payload
+                                token_text = self._message_text(token_message)
+                                if (
+                                    metadata.get("langgraph_node") == "model"
+                                    and token_text
+                                    and not isinstance(token_message, ToolMessage)
+                                    and not getattr(token_message, "tool_calls", None)
+                                ):
+                                    streamed_parts.append(token_text)
+                                    yield self._sse_event("token", token_text)
+                            elif mode == "values":
+                                final_result = payload
+                    except Exception:
+                        stream_status = "error"
+                        raise
+                    finally:
+                        collector.record(
+                            kind="agent",
+                            name="agent_graph.invoke",
+                            duration_ms=elapsed_ms(agent_started),
+                            status=stream_status,
+                        )
+
+                if final_result is None:
+                    raise RuntimeError("Agent stream completed without a final result payload.")
+
+                diagnostics = collector.build_diagnostics(elapsed_ms(started))
+                diagnostics["runtime"] = build_runtime_context(self.settings, route="/agent/stream")
+                response = self._build_response(
+                    request_id=request_id,
+                    thread_id=thread_id,
+                    result=final_result,
+                    diagnostics=diagnostics,
+                )
+                if not response.answer and streamed_parts:
+                    response.answer = "".join(streamed_parts).strip()
+                yield self._sse_event("response", response.model_dump_json())
+                yield self._sse_event("done", "")
+            except Exception as exc:
+                error = str(exc)
+                message = str(exc)
+                if not isinstance(exc, DependencyUnavailableError):
+                    message = f"LLM service unavailable during agent execution: {exc}"
+                yield self._sse_event("error", message)
+            finally:
+                diagnostics = collector.build_diagnostics(elapsed_ms(started))
+                diagnostics["runtime"] = build_runtime_context(
+                    self.settings,
+                    route="/agent/stream",
+                )
+                self.observability.record_request(
+                    route="/agent/stream",
+                    request_id=request_id,
+                    status="error" if error else "success",
+                    diagnostics=response.diagnostics if response else diagnostics,
+                    final_query=response.final_query if response else None,
+                    answer=response.answer if response else None,
+                    error=error,
+                )
+                clear_active_collector()
+
+        return iterator()
+
     def _build_model(self) -> ChatOllama:
         return ChatOllama(
             model=self.settings.llm_runtime_model,
@@ -222,11 +331,12 @@ class LangChainAgentService:
             temperature=0,
         )
 
-    def _build_agent_graph(self) -> AgentGraphLike:
+    def _build_agent_graph(self) -> Any:
         return create_agent(
             model=self._build_model(),
             tools=self.tools,
             system_prompt=self.SYSTEM_PROMPT,
+            checkpointer=self.checkpointer,
         )
 
     def _build_rewrite_chain(self) -> Any:
@@ -322,6 +432,8 @@ class LangChainAgentService:
         return [rag_search, summarize_context, rewrite_query]
 
     def _build_messages(self, request: AgentRequest) -> list[BaseMessage]:
+        if request.thread_id:
+            return [HumanMessage(content=request.message)]
         messages: list[BaseMessage] = []
         for turn in request.conversation:
             if turn.role == "assistant":
@@ -405,6 +517,7 @@ class LangChainAgentService:
     def _build_response(
         self,
         request_id: str,
+        thread_id: str,
         result: Any,
         diagnostics: dict[str, Any],
     ) -> AgentResponse:
@@ -450,17 +563,44 @@ class LangChainAgentService:
         answer = ""
         for message in reversed(messages):
             if isinstance(message, AIMessage) and not message.tool_calls:
-                answer = self._message_text(message)
+                answer = self._message_text(message).strip()
                 break
+        if not answer:
+            answer = self._fallback_answer(tool_calls, final_query)
 
         return AgentResponse(
             request_id=request_id,
+            thread_id=thread_id,
             answer=answer,
             tool_calls=tool_calls,
             citations=citations,
             final_query=final_query,
             diagnostics=diagnostics,
         )
+
+    @staticmethod
+    def _fallback_answer(
+        tool_calls: list[ToolCallRecord],
+        final_query: str | None,
+    ) -> str:
+        for tool_call in reversed(tool_calls):
+            if tool_call.status != "success":
+                continue
+            if tool_call.name == "summarize_context":
+                summary = tool_call.output.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    return summary.strip()
+            if tool_call.name == "rag_search":
+                citations = tool_call.output.get("citations", [])
+                if isinstance(citations, list) and citations:
+                    query = final_query or tool_call.output.get("query") or "this topic"
+                    return (
+                        "I retrieved relevant context for "
+                        f"\"{query}\", but failed to produce a complete final answer. "
+                        "Please try again."
+                    )
+                return "I could not find matching information in the local knowledge base."
+        return ""
 
     @staticmethod
     def _tool_payload(message: ToolMessage) -> dict[str, Any]:
@@ -493,8 +633,8 @@ class LangChainAgentService:
         return {"content": str(content)}
 
     @staticmethod
-    def _message_text(message: AIMessage) -> str:
-        content = message.content
+    def _message_text(message: Any) -> str:
+        content = getattr(message, "content", message)
         if isinstance(content, str):
             return content
         if isinstance(content, list):
@@ -504,7 +644,7 @@ class LangChainAgentService:
                     parts.append(item)
                 elif isinstance(item, dict) and "text" in item:
                     parts.append(str(item["text"]))
-            return "\n".join(part for part in parts if part).strip()
+            return "\n".join(part for part in parts if part)
         return str(content)
 
     @staticmethod
@@ -546,6 +686,31 @@ class LangChainAgentService:
                 "route": collector.route,
                 "tool_name": tool_name,
             }
+        }
+
+    @staticmethod
+    def _sse_event(event: str, data: str) -> str:
+        payload = data.replace("\r\n", "\n").replace("\r", "\n")
+        lines = payload.split("\n") if payload else [""]
+        body = "\n".join(f"data: {line}" for line in lines)
+        return f"event: {event}\n{body}\n\n"
+
+    def _build_graph_config(
+        self,
+        *,
+        request_id: str,
+        route: str,
+        thread_id: str,
+        max_steps: int | None,
+    ) -> dict[str, Any]:
+        return {
+            "recursion_limit": max(25, (max_steps or self.settings.agent_max_steps) * 4),
+            "configurable": {"thread_id": thread_id},
+            "metadata": {
+                "request_id": request_id,
+                "route": route,
+                "thread_id": thread_id,
+            },
         }
 
 
