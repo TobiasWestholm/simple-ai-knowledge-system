@@ -26,3 +26,4 @@ data/qdrant/
 .pytest_tmp/
 pytest-cache-files-*/
 knowledge/
+TODO.md

@@ -9,8 +9,14 @@ EMBED_BIND_HOST="0.0.0.0"
 EMBED_HEALTH_URL="http://127.0.0.1:8001/health"
 
 UV_BIN="$("$ROOT_DIR/scripts/ensure_uv.sh")"
+UVICORN_BIN="$ROOT_DIR/.venv/bin/uvicorn"
 
 mkdir -p "$RUNTIME_DIR" "$ROOT_DIR/logs"
+
+if [ ! -x "$UVICORN_BIN" ]; then
+  echo "Project virtualenv is missing; syncing local Python dependencies..."
+  "$UV_BIN" sync --extra dev >/dev/null
+fi
 
 if curl -fsS "$EMBED_HEALTH_URL" >/dev/null 2>&1; then
   echo "Embedding service already running."
@@ -28,7 +34,7 @@ fi
 
 if ! curl -fsS "$EMBED_HEALTH_URL" >/dev/null 2>&1; then
   echo "Starting host embedding service..."
-  nohup "$UV_BIN" run uvicorn ai_ks.embedding_service:app --host "$EMBED_BIND_HOST" --port 8001 \
+  nohup "$UVICORN_BIN" ai_ks.embedding_service:app --host "$EMBED_BIND_HOST" --port 8001 \
     >"$LOG_FILE" 2>&1 &
   echo "$!" >"$PID_FILE"
 fi
