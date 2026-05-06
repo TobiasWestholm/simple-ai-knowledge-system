@@ -1,7 +1,11 @@
+from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from ai_ks.agent import AgentRequest, AgentResponse, LangChainAgentService, get_agent_service
 from ai_ks.config import get_settings
@@ -17,6 +21,22 @@ from ai_ks.query import QueryRequest, QueryResponse, QueryService, get_query_ser
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+package_dir = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(package_dir / "templates"))
+app.mount("/static", StaticFiles(directory=str(package_dir / "static")), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="chat.html",
+        context={
+            "app_name": settings.app_name,
+            "max_query_chars": settings.max_query_chars,
+            "default_route": "/agent/stream",
+        },
+    )
 
 
 @app.get("/health")
@@ -56,6 +76,29 @@ def run_agent(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DependencyUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/agent/stream")
+def stream_agent(
+    request: AgentRequest,
+    agent_service: Annotated[LangChainAgentService, Depends(get_agent_service)],
+) -> StreamingResponse:
+    try:
+        stream = agent_service.stream(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/query", response_model=QueryResponse)

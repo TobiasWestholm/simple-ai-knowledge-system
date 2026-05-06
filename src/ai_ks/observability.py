@@ -93,6 +93,10 @@ def reset_active_collector(token: Token[TimingCollector | None]) -> None:
     _ACTIVE_COLLECTOR.reset(token)
 
 
+def clear_active_collector() -> None:
+    _ACTIVE_COLLECTOR.set(None)
+
+
 def get_active_collector() -> TimingCollector | None:
     return _ACTIVE_COLLECTOR.get()
 

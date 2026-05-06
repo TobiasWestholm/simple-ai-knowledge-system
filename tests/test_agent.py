@@ -47,6 +47,9 @@ class FakeAgentGraph:
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> dict[str, Any]:
         return self.result
 
+    def stream(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        yield ("values", self.result)
+
 
 class FakeRetriever(HybridRetriever):
     def __init__(self) -> None:
@@ -198,6 +201,7 @@ def test_agent_service_maps_langchain_messages_into_api_response() -> None:
     response = service.run(AgentRequest(message="What is FastAPI?"))
 
     assert response.answer == "FastAPI is a modern Python web framework [1]."
+    assert response.thread_id
     assert response.final_query == "fastapi overview"
     assert [record.name for record in response.tool_calls] == ["rewrite_query", "rag_search"]
     assert response.citations[0].citation_id == 1
@@ -210,6 +214,7 @@ def test_agent_endpoint_uses_dependency_override() -> None:
         def run(self, request: AgentRequest) -> AgentResponse:
             return AgentResponse(
                 request_id="req-1",
+                thread_id=request.thread_id or "thread-1",
                 answer=f"Echo: {request.message}",
                 tool_calls=[],
                 citations=[],
@@ -225,6 +230,7 @@ def test_agent_endpoint_uses_dependency_override() -> None:
     payload = response.json()
     assert payload["answer"] == "Echo: Summarize FastAPI"
     assert payload["final_query"] == "Summarize FastAPI"
+    assert payload["thread_id"] == "thread-1"
 
     app.dependency_overrides.clear()
 
@@ -264,6 +270,7 @@ def test_agent_endpoint_accepts_boundary_length_message() -> None:
         def run(self, request: AgentRequest) -> AgentResponse:
             return AgentResponse(
                 request_id="req-boundary",
+                thread_id=request.thread_id or "thread-boundary",
                 answer="ok",
                 tool_calls=[],
                 citations=[],
@@ -338,6 +345,68 @@ def test_agent_service_records_logs_and_telemetry(tmp_path: Path) -> None:
 
     assert request_row == ("/agent", "success")
     assert [row[0] for row in span_rows] == ["agent_graph.invoke"]
+
+
+def test_agent_service_falls_back_to_summary_when_final_ai_message_is_empty() -> None:
+    agent_graph = FakeAgentGraph(
+        result={
+            "messages": [
+                HumanMessage(content="Summarize acoustophoresis"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "summarize_context",
+                            "args": {"text": "Acoustophoresis uses acoustic forces."},
+                            "id": "call-1",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    content="Acoustophoresis uses acoustic forces.",
+                    artifact={"summary": "Acoustophoresis uses acoustic forces."},
+                    tool_call_id="call-1",
+                    name="summarize_context",
+                ),
+                AIMessage(content=""),
+            ]
+        }
+    )
+    service = LangChainAgentService(
+        settings=Settings(),
+        retriever=FakeRetriever(),
+        utility_model=RunnableLambda(FakeUtilityModel(response="unused")),
+        agent_graph=agent_graph,
+        observability=FakeObservability(),
+    )
+
+    response = service.run(AgentRequest(message="Summarize acoustophoresis"))
+
+    assert response.answer == "Acoustophoresis uses acoustic forces."
+
+
+def test_agent_stream_endpoint_uses_dependency_override() -> None:
+    class FakeAgentService:
+        def stream(self, request: AgentRequest) -> Any:
+            yield "event: token\ndata: Hello\n\n"
+            yield (
+                "event: response\n"
+                'data: {"request_id":"req-stream","thread_id":"thread-stream","answer":"Hello",'
+                '"tool_calls":[],"citations":[],"final_query":"Hello","diagnostics":{}}\n\n'
+            )
+
+    app.dependency_overrides[get_agent_service] = lambda: FakeAgentService()
+    client = TestClient(app)
+
+    with client.stream("POST", "/agent/stream", json={"message": "Hi"}) as response:
+        payload = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "event: token" in payload
+    assert '"thread_id":"thread-stream"' in payload
+
+    app.dependency_overrides.clear()
 
 
 def test_agent_service_wraps_llm_errors() -> None:

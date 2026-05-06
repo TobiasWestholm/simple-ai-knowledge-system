@@ -25,6 +25,7 @@ class FakeAgentService:
         if "FastAPI" in message:
             return AgentResponse(
                 request_id="req-rag",
+                thread_id="thread-rag",
                 answer="FastAPI is a web framework [1].",
                 tool_calls=[
                     ToolCallRecord(
@@ -60,6 +61,7 @@ class FakeAgentService:
             )
         return AgentResponse(
             request_id="req-no-tool",
+            thread_id="thread-no-tool",
             answer="ready",
             tool_calls=[],
             citations=[],
@@ -149,6 +151,7 @@ def test_tool_behavior_rewrite_reference_query_is_checked() -> None:
         def run(self, request: Any) -> AgentResponse:
             return AgentResponse(
                 request_id="req-rewrite",
+                thread_id="thread-rewrite",
                 answer="done",
                 tool_calls=[
                     ToolCallRecord(
@@ -194,6 +197,7 @@ def test_tool_behavior_allows_rewrite_plus_two_rag_searches_when_case_requests_i
         def run(self, request: Any) -> AgentResponse:
             return AgentResponse(
                 request_id="req-two-searches",
+                thread_id="thread-two-searches",
                 answer=(
                     "I could not find relevant information about FastAPI "
                     "in the local knowledge base."
